@@ -1,7 +1,6 @@
 package com.cs296.kainrath.cs296project.backend;
 
 import com.google.android.gcm.server.Message;
-import com.google.android.gcm.server.MulticastResult;
 import com.google.android.gcm.server.Sender;
 import com.google.api.server.spi.config.Api;
 import com.google.api.server.spi.config.ApiMethod;
@@ -17,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import javax.inject.Named;
@@ -33,23 +33,35 @@ import javax.inject.Named;
 )
 public class UserEndpoint {
 
-    private static final String url = "jdbc:google:mysql://cs296-backend:cs296-app-location-data/UserLocation?user=root";
-    private static final String driver = "com.mysql.jdbc.GoogleDriver";
-
+    private static final String URL = "jdbc:google:mysql://cs296-backend:cs296-app-location-data/UserLocation?user=root";
+    private static final String DRIVER = "com.mysql.jdbc.GoogleDriver";
     private static final Logger logger = Logger.getLogger(UserEndpoint.class.getName());
 
     private static final String API_KEY = "AIzaSyAJuwfy0EoirghnDaThupzrqNTDVxsm650";
 
+    /**
+     * Sends a message to all users in a ChatGroup
+     * @param email The email of the user sending the message
+     * @param chatId The id of the ChatGroup which the message is being sent to
+     * @param message The message to be sent to the ChatGroup
+     */
     @ApiMethod(name = "sendMessage")
     public void sendMessage(@Named("email") String email, @Named("chatId") Integer chatId, @Named("message") String message) {
+        logger.log(Level.FINEST, "Calling sendMessage method");
+
+        // Make sure parameters are valid
         if (message == null || message.isEmpty() || email == null || email.isEmpty()) {
+            // TODO: Notify sender that message failed to send
+            logger.log(Level.FINE, "Invalid parameters");
             return;
         }
-        try {
-            Class.forName(driver);
-            Connection conn = DriverManager.getConnection(url);
 
-            // Get users to send message to
+        try {
+            // Connect to the database to retrieve gcm tokens of the users in the ChatGroup
+            Class.forName(DRIVER);
+            Connection conn = DriverManager.getConnection(URL);
+
+            // Retrieve tokens of users in the chat group
             String tokenQuery = "SELECT Token FROM ChatUsers WHERE ChatId=" + chatId;
             ResultSet tokenSet = conn.createStatement().executeQuery(tokenQuery);
             List<String> tokens = new ArrayList<>();
@@ -57,157 +69,133 @@ public class UserEndpoint {
                 tokens.add(tokenSet.getString("Token"));
             }
 
+            // Send GCM message
             Sender sender = new Sender(API_KEY);
             Message msg = new Message.Builder().addData("Action", "NewMessage").addData("ChatId", "" + chatId)
                     .addData("Message", message).addData("Email", email).build();
-
-            MulticastResult mr = sender.send(msg, tokens, 3);
-
-        } catch (ClassNotFoundException e) {
-            e.printStackTrace();
-            return;
-        } catch (SQLException e) {
-            String error = e.getSQLState();
-            return;
-        } catch (IOException e) {
-            String error = e.getMessage();
-            return;
+            sender.send(msg, tokens, 3);
+        } catch (ClassNotFoundException | SQLException | IOException e) {
+            logger.log(Level.SEVERE, "Failed to send GCM message");
+            // TODO: Notify sender that message failed to send
         }
     }
 
-    // Function not used anymore
     /**
-     * @param user_id the ID of the entity to be retrieved
-     * @return the user with the corresponding Id
-     */
-    @ApiMethod(
-            name = "get",
-            path = "user/{user_id}",
-            httpMethod = ApiMethod.HttpMethod.GET)
-    public static User getOne(@Named("user_id") String user_id) {
-        logger.info("Getting User with ID: " + user_id);
-
-        User user = null;
-        try {
-            Class.forName(driver);
-            Connection conn = DriverManager.getConnection(url);
-
-            String user_info = "SELECT * FROM UserInfo WHERE UserId=\"" + user_id + "\"";
-            ResultSet info = conn.createStatement().executeQuery(user_info);
-            if (!info.next()) { // USER NOT IN DATABASE
-                conn.close();
-                return null;
-            }
-            user = new User();
-            user.setId(user_id);
-            user.setEmail(info.getString("Email"));
-            user.setToken(info.getString("Token"));
-
-            String user_ints = "SELECT Interest FROM UserInterests WHERE UserId=\"" + user_id + "\"";
-            ResultSet ints = conn.createStatement().executeQuery(user_ints);
-            Set<String> interests = new TreeSet<String>();
-            while (ints.next()) {
-                interests.add(ints.getString("Interests"));
-            }
-            user.setInterests(interests);
-            conn.close();
-        } catch (ClassNotFoundException e) {
-            String error = e.getMessage();
-            return null;
-        } catch (SQLException e) {
-            String error = e.getSQLState();
-            return null;
-        }
-
-        return user;
-    }
-
-    /**
-     * Function is called when the app starts up
-     * @param user_id the ID of the entity to be retrieved
-     * @return the user with the corresponding ID
+     * Retrieves and returns the user associated with userId
+     * @param userId The ID of the entity to be retrieved
+     * @return User with the corresponding ID or null if there is no associated user
      */
     @ApiMethod(name = "get")
-    public User get(@Named("user_id") String user_id, @Named("email") String email, @Named("token") String token) {
-        logger.info("Getting User with ID: " + user_id);
+    public User getUser(@Named("userId") String userId) throws NotFoundException {
+        logger.log(Level.FINEST, "Calling get method");
+
         User user = null;
+        Connection conn = null;
         try {
-            Class.forName(driver);
-            Connection conn = DriverManager.getConnection(url);
+            // Connect to database
+            Class.forName(DRIVER);
+            conn = DriverManager.getConnection(URL);
 
+            // Get user info
+            user = getUserHelper(conn, userId);
 
-            String query = "SELECT * FROM UserInfo WHERE UserId=\"" + user_id + "\"";
-            ResultSet result = conn.createStatement().executeQuery(query);
-            user = new User();
-            user.setId(user_id);
-            user.setEmail(email);
-            user.setToken(token);
-            Set<String> interest_set = new TreeSet<String>();
-            if (result.next()) { // User is in the database, get interests
-
-                // Make sure the user isn't in the chatgroup/chatuser table
-                // This would happen if user doesn't deactivate and app is killed
-                if (result.getString("Active").equals("Y")) {
-                    ResultSet chats = conn.createStatement().executeQuery("SELECT ChatId FROM ChatUsers WHERE UserId=\"" + user_id + "\"");
-                    if (chats.next()) {
-                        String chatString = "" + chats.getInt("ChatId");
-                        while (chats.next()) {
-                            chatString += "," + chats.getInt("ChatId");
-                        }
-                        LocationEndpoint locationEndpoint = new LocationEndpoint();
-                        locationEndpoint.deactivateUser(user_id, email, result.getDouble("Latitude"), result.getDouble("Longitude"), chatString);
-                    }
-                    conn.createStatement().executeUpdate("UPDATE UserInfo SET Active=\"N\" WHERE UserId=\"" + user_id + "\"");
-                }
-
-
-                ResultSet int_result = conn.createStatement().executeQuery("SELECT Interest FROM UserInterests WHERE UserId=\"" +
-                        user_id + "\"");
-                while (int_result.next()) {
-                    interest_set.add(int_result.getString("Interest"));
-                }
-
-                // If the token is new, update the database
-                if (!token.equals(result.getString("Token"))) {
-                    conn.createStatement().executeUpdate("UPDATE UserInfo SET Token=\"" + token + "\" WHERE UserId=\""
-                            + user_id + "\"");
-                }
-
-
-
-            } else { // New user, not in the database
-                String add_user = "INSERT INTO UserInfo (UserId, Email, Token, Active) VALUES (\"" + user_id +
-                        "\", \"" + email + "\", \"" + token + "\", \"N\")";
-                conn.createStatement().executeUpdate(add_user);
-            }
-            user.setInterests(interest_set);
+            // Close connection
             conn.close();
-
         } catch (ClassNotFoundException e) {
-            String error = e.getMessage();
+            logger.log(Level.SEVERE, "MySql driver not found: " + e.getMessage());
             return null;
         } catch (SQLException e) {
-            String error = e.getSQLState();
+            logger.log(Level.SEVERE, "SQLException: " + e.getErrorCode());
             return null;
         }
         return user;
     }
 
-
-    // Function not used anymore
     /**
-     * Inserts a new User
+     * Function is called when the app starts up and needs to retrieve the user's info
+     * as well as set the user's current GCM token.  If the user is not in the database,
+     * the user will be added to it.
+     * @param userId The ID of the user.
+     * @param email The email of the user.
+     * @param token The token associated with the user's current session.
+     * @return The user with the corresponding ID.
      */
+    @ApiMethod(name = "getUserAndSetToken")
+    public User getUserAndSetToken(@Named("userId") String userId, @Named("email") String email, @Named("token") String token) {
+        logger.log(Level.FINEST, "Calling getUserAndSetToken method");
+        User user;
+        try {
+            // Connect to the database
+            Class.forName(DRIVER);
+            Connection conn = DriverManager.getConnection(URL);
+
+            // Get user info
+            user = getUserHelper(conn, userId);
+
+            if (user != null) { // Update user's token in the database
+                conn.createStatement().executeUpdate("UPDATE UserInfo SET Token=\"" + token + "\" WHERE UserId=\""
+                            + userId + "\"");
+            } else { // New user, insert into the database
+                String insertUser = "INSERT INTO UserInfo (UserId, Email, Token, Active) VALUES (\"" + userId +
+                        "\", \"" + email + "\", \"" + token + "\", \"N\")";
+                conn.createStatement().executeUpdate(insertUser);
+
+                user = new User(userId, email, token);
+            }
+
+            // Close connection
+            conn.close();
+        } catch (ClassNotFoundException e) {
+            logger.log(Level.SEVERE, "MySql driver not found: " + e.getMessage());
+            return null;
+        } catch (SQLException e) {
+            logger.log(Level.SEVERE, "SQLException: " + e.getErrorCode());
+            return null;
+        }
+        return user;
+    }
+
+    // Retrieves and returns the user's information associated with the userId from the established connection conn.
+    private User getUserHelper(Connection conn, String userId) {
+        User user;
+        try {
+            // Query database for the user
+            String userInfoQuery = "SELECT * FROM UserInfo WHERE UserId=\"" + userId + "\"";
+            ResultSet userQueryResult = conn.createStatement().executeQuery(userInfoQuery);
+            if (!userQueryResult.next()) { // User not in the database
+                logger.log(Level.FINE, "User not in database");
+                return null;
+            }
+            user = new User(userId, userQueryResult.getString("Email"), userQueryResult.getString("Token"));
+
+            // Query database for the user's interests
+            String userInterestsQuery = "SELECT Interest FROM UserInterests WHERE UserId=\"" + userId + "\"";
+            ResultSet interestsQueryResult = conn.createStatement().executeQuery(userInterestsQuery);
+            Set<String> interests = new TreeSet<>();
+            while (interestsQueryResult.next()) {
+                interests.add(interestsQueryResult.getString("Interests"));
+            }
+            user.setInterests(interests);
+        } catch (SQLException e) {
+            logger.log(Level.SEVERE, "SQLException: " + e.getErrorCode());
+            return null;
+        }
+        return user;
+    }
+
+    // Inserts a User into the database.  The function was used for testing, but isn't used anymore.
     @ApiMethod(name = "insert")
     public void insert(User user) {
+        logger.log(Level.FINEST, "Calling insert method");
+
         try {
-            Class.forName(driver);
-            Connection conn = DriverManager.getConnection(url);
+            Class.forName(DRIVER);
+            Connection conn = DriverManager.getConnection(URL);
 
             // Insert user data into table
-            String insertInfo = "INSERT INTO UserInfo (UserId, Email, Token, Active) VALUES (\"" + user.getId() +
+            String insertUser = "INSERT INTO UserInfo (UserId, Email, Token, Active) VALUES (\"" + user.getId() +
                     "\", \"" + user.getEmail() + "\", \"" + user.getToken() + "\", \"N\")";
-            conn.createStatement().executeUpdate(insertInfo);
+            conn.createStatement().executeUpdate(insertUser);
 
             // Insert user interests into table
             List<String> interests = new ArrayList<>(user.getInterests());
@@ -223,110 +211,113 @@ public class UserEndpoint {
 
             conn.close();
         } catch (ClassNotFoundException e) {
-            String error = e.getMessage();
+            logger.log(Level.SEVERE, "MySql driver not found: " + e.getMessage());
             return;
         } catch (SQLException e) {
-            String error = e.getSQLState();
+            logger.log(Level.SEVERE, "SQLException: " + e.getErrorCode());
             return;
         }
 
     }
 
     /**
-     * @param user_id the ID of the entity to be updated
-     * @return the updated version of the user
+     * Updates the user's interests in the database.
+     * @param userId The ID of the entity to be updated.
+     * @param newInterests The interests to be added to the database.
+     * @param removeInterests The interests to be removed from the database.
      * @throws NotFoundException if user is not in the database
      */
-    @ApiMethod(
-            name = "update",
-            path = "user/{user_id}",
-            httpMethod = ApiMethod.HttpMethod.PUT)
-    public void update(@Named("user_id") String user_id, @Named("add") String add, @Named("remove") String remove)
-            throws NotFoundException {
-        // Need to parse interests to add/remove since (due to weird formatting)
-        boolean modAdd = false;
-        boolean modRem = false;
-        List<String> addAll = new ArrayList<>();
-        if (!add.isEmpty() && !add.equals("")) {
-            String[] new_ints_arr = add.split(",,,");
-            for (String s : new_ints_arr) {
-                addAll.add(s);
-            }
-            modAdd = true;
-        }
-        List<String> remAll = new ArrayList<>();
-        if (!remove.isEmpty() && !remove.equals("")) {
-            String[] old_ints_arr = remove.split(",,,");
-            for (String s : old_ints_arr) {
-                remAll.add(s);
-            }
-            modRem = true;
-        }
-        if (modAdd || modRem) {
-            try {
-                Class.forName(driver);
-                Connection conn = DriverManager.getConnection(url);
+    @ApiMethod(name = "updateInterests")
+    public void updateInterests(@Named("userId") String userId, @Named("newInterests") String newInterests,
+                                @Named("removeInterests") String removeInterests) throws NotFoundException {
 
-                ResultSet validUser = conn.createStatement().executeQuery("SELECT UserId FROM UserInfo WHERE UserId=\"" + user_id + "\"");
-                if (!validUser.next() || !validUser.getString("UserId").equals(user_id)) {
-                    throw new NotFoundException("User Not in the Database");
+        logger.log(Level.FINEST, "Calling updateInterests method");
+
+        // Need to parse interests since lists are not accurately formatted.
+        String[] newInterestsArray = null;
+        if (!newInterests.equals("")) { // Parse new interests
+            newInterestsArray = newInterests.split(",,,");
+        }
+
+        String[] oldInterestsArray = null;
+        if (!removeInterests.equals("")) { // Parse interests to remove
+            oldInterestsArray = removeInterests.split(",,,");
+        }
+
+        if (newInterestsArray != null || oldInterestsArray != null) {
+            try {
+                // Connect to the database
+                Class.forName(DRIVER);
+                Connection conn = DriverManager.getConnection(URL);
+
+                // Make sure userId is a valid user
+                ResultSet validUser = conn.createStatement().executeQuery("SELECT UserId FROM UserInfo WHERE UserId=\"" + userId + "\"");
+                if (!validUser.next() || !validUser.getString("UserId").equals(userId)) {
+                    logger.log(Level.FINE, "User not in database, cannot update");
+                    conn.close();
+                    throw new NotFoundException("User not in the Database");
                 }
 
-                if (modAdd) {
+                // Add interests if there are new interests
+                if (newInterestsArray != null) {
                     String adds = "INSERT INTO UserInterests (UserId, Interest) VALUES (\"" +
-                            user_id + "\", \"" + addAll.get(0) + "\")";
-                    for (int i = 1; i < addAll.size(); ++i) {
-                        adds += ", (\"" + user_id + "\", \"" + addAll.get(i) + "\")";
+                            userId + "\", \"" + newInterestsArray[0] + "\")";
+                    for (int i = 1; i < newInterestsArray.length; ++i) {
+                        adds += ", (\"" + userId + "\", \"" + newInterestsArray[i] + "\")";
                     }
                     conn.createStatement().executeUpdate(adds);
                 }
 
-                if (modRem) {
-                    String delete = "DELETE FROM UserInterests WHERE UserId=\"" + user_id + "\" AND Interest IN (\"" +
-                            remAll.get(0) + "\"";
-                    for (int i = 1; i < remAll.size(); ++i) {
-                        delete += ", \"" + remAll.get(i) + "\"";
+                // Remove interests if there are any to remove
+                if (oldInterestsArray != null) {
+                    String delete = "DELETE FROM UserInterests WHERE UserId=\"" + userId + "\" AND Interest IN (\"" +
+                            oldInterestsArray[0] + "\"";
+                    for (int i = 1; i < oldInterestsArray.length; ++i) {
+                        delete += ", \"" + oldInterestsArray[i] + "\"";
                     }
                     delete += ")";
                     conn.createStatement().executeUpdate(delete);
                 }
 
+                // Close connection
                 conn.close();
             } catch (ClassNotFoundException e) {
-                String error = e.getMessage();
+                logger.log(Level.SEVERE, "MySql driver not found: " + e.getMessage());
                 return;
             } catch (SQLException e) {
-                String error = e.getSQLState();
+                logger.log(Level.SEVERE, "SQLException: " + e.getErrorCode());
                 return;
             }
         }
     }
 
     /**
-     * @param user_id the ID of the entity to delete
-     * @throws NotFoundException if the user_id does not correspond to an existing
+     * Removes the user from the database.
+     * @param userId The ID of the entity to delete
+     * @throws NotFoundException if the userId does not correspond to an existing
      */
-    @ApiMethod(
-            name = "remove",
-            path = "user/{user_id}",
-            httpMethod = ApiMethod.HttpMethod.DELETE)
-    public void remove(@Named("user_id") String user_id) throws NotFoundException {
+    @ApiMethod(name = "remove")
+    public void remove(@Named("userId") String userId) throws NotFoundException {
+        logger.log(Level.FINE, "Calling remove method");
         try {
-            Class.forName(driver);
-            Connection conn = DriverManager.getConnection(url);
+            // Connect to the database
+            Class.forName(DRIVER);
+            Connection conn = DriverManager.getConnection(URL);
 
-            String delete = "DELETE FROM UserInfo, UserInterests WHERE UserId=\"" + user_id + "\"";
-            if (conn.createStatement().executeUpdate(delete) == -1) {
-                // User will at least be in UserInfo, if not in UserInterests
+            // Remove from the database
+            String delete = "DELETE FROM UserInfo, UserInterests WHERE UserId=\"" + userId + "\"";
+            if (conn.createStatement().executeUpdate(delete) == -1) { // If true, the user is not in the database
+                logger.log(Level.SEVERE, "User not in database, cannot remove");
                 throw new NotFoundException("User Not in the Database");
             }
-            conn.close();
 
+            // Close connection
+            conn.close();
         } catch (ClassNotFoundException e) {
-            String error = e.getMessage();
+            logger.log(Level.SEVERE, "MySql driver not found: " + e.getMessage());
             return;
         } catch (SQLException e) {
-            String error = e.getSQLState();
+            logger.log(Level.SEVERE, "SQLException: " + e.getErrorCode());
             return;
         }
     }

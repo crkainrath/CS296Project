@@ -4,33 +4,21 @@ package com.cs296.kainrath.cs296project.backend;
 
 /**
  * Created by kainrath on 4/3/16.
+ * Location object that keeps track of latitude and longitude
+ * Latitude and longitude are not checked to see if they are within a valid range
+ * since all latitude and longitude values originate from Google Api calls.
  */
 
 public class Location {
-    public static final String LAT_FIELD = "Latitude";
-    public static final String LONG_FIELD = "Longitude";
-    public static final String ID_FIELD = "UserId";
-
-    private String user_id;
 
     private double latitude;
-
     private double longitude;
 
-    public Location () { }
+    private static final double DEGREE_TO_RADIANS = 0.017453292519943295; // PI / 180 precomputed to save time
+    private static final int EARTH_DIAMETER = 12742000; // Earth's diameter in meters
 
-    public Location (String user_id, double latitude, double longitude) {
-        this.user_id = user_id;
-        this.latitude = latitude;
-        this.longitude = longitude;
-    }
-
-    public void setUser_id(String user_id) {
-        this.user_id = user_id;
-    }
-
-    public String getUser_id() {
-        return user_id;
+    public Location (double latitude, double longitude) {
+        setLocation(latitude, longitude);
     }
 
     public double getLatitude() {
@@ -41,29 +29,29 @@ public class Location {
         return longitude;
     }
 
+    public void setLocation(double latitude, double longitude) {
+        this.latitude = latitude;
+        this.longitude = longitude;
+    }
+
     public void setLatitude(double latitude) {
         this.latitude = latitude;
     }
 
-    public void setLongitude(double longitude) {
+    public void setLongitude(double longitude) throws IllegalArgumentException {
         this.longitude = longitude;
     }
 
-    // Calculates distance between two locations in meters
+    // Calculates and returns the distance between two locations in meters
     public double distanceTo(Location other) {
-        double deg2rad = 0.017453292519943295;  // PI / 180 precomputed to save time
-        double distance = 0.5 - Math.cos((other.latitude - this.latitude) * deg2rad)/2 +
-                          Math.cos(this.latitude * deg2rad) * Math.cos(other.latitude * deg2rad) *
-                          (1 - Math.cos((other.longitude - this.longitude) * deg2rad))/2;
-        return 12742000 * Math.asin(Math.sqrt(distance)); // Earths radius in m (6371000) * 2 precomputed
+        return distanceTo(other.getLatitude(), other.getLongitude());
     }
 
-    // For comparing the distance between a User and a ChatGroup
+    // Calculates and returns the distance between two locations in meters
     public double distanceTo(double lat, double lon) {
-        double deg2rad = 0.017453292519943295;  // PI / 180 precomputed to save time
-        double distance = 0.5 - Math.cos((lat - this.latitude) * deg2rad)/2 +
-                Math.cos(this.latitude * deg2rad) * Math.cos(lat * deg2rad) *
-                        (1 - Math.cos((lon - this.longitude) * deg2rad))/2;
-        return 12742000 * Math.asin(Math.sqrt(distance)); // Earths radius in m (6371000) * 2 precomputed
+        double distance = 0.5 - Math.cos((lat - this.latitude) * DEGREE_TO_RADIANS)/2 +
+                Math.cos(this.latitude * DEGREE_TO_RADIANS) * Math.cos(lat * DEGREE_TO_RADIANS) *
+                        (1 - Math.cos((lon - this.longitude) * DEGREE_TO_RADIANS))/2;
+        return EARTH_DIAMETER * Math.asin(Math.sqrt(distance));
     }
 }

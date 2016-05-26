@@ -1,10 +1,5 @@
 package com.cs296.kainrath.cs296project.backend;
 
-import com.google.api.server.spi.config.Api;
-import com.googlecode.objectify.annotation.Entity;
-import com.googlecode.objectify.annotation.Id;
-import com.googlecode.objectify.annotation.Index;
-
 import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
@@ -13,61 +8,59 @@ import java.util.TreeSet;
  * Created by kainrath on 3/25/16.
  */
 
-@Entity
+// Represents a User
 public class User {
-    @Id
-    String user_id;
-    @Index
-    String user_email;
-    
-    Set<String> interests;
+    private String userId;
+    private String email;
+    private String gcmToken;
+    private Set<String> interests;
 
+    // A user's current location
+    private Location location;
 
-    // To send gcm messages to client app
-    String token;
-
-    public User() {
-        this(null, null);
+    public User(String userId, String email, String gcmToken) {
+        this(userId, email, gcmToken, null);
     }
 
-    public User(String id, String email) {
-        interests = new TreeSet<String>();
-        user_id = id;
-        user_email = email;
+    public User(String userId, String email, String gcmToken, Set<String> interests) {
+        this.userId = userId;
+        this.email = email;
+        this.gcmToken = gcmToken;
+        if (interests == null) {
+            this.interests = new TreeSet<>();
+        } else {
+            this.interests = interests;
+        }
     }
 
-    public String getId() { return this.user_id; }
+    public String getId() { return this.userId; }
 
-    public void setId(String id) {
-        this.user_id = id;
-    }
+    public String getEmail() { return this.email; }
 
-    public String getEmail() {
-        return this.user_email;
-    }
+    public Set<String> getInterests() { return this.interests; }
 
-    public void setEmail(String email) {
-        this.user_email = email;
-    }
+    public String getToken() { return this.gcmToken; }
 
-    public Set<String> getInterests() {
-        return this.interests;
-    }
+    // Methods for adding interest(s)
+    public void addInterests(List<String> interests) { this.interests.addAll(interests); }
+    public void addInterests(Set<String> interests) { this.interests.addAll(interests); }
+    public void addInterest(String interest) { this.interests.add(interest); }
 
-    public void addInterests(List<String> interests) {
-        this.interests.addAll(interests);
-    }
-
-    public void addInterests(String interest) { this.interests.add(interest); }
-
+    // Replace current interests with a new set of interests
     public void setInterests(Set<String> interests) { this.interests = interests; }
 
-    public void setToken(String token) {
-        this.token = token;
+    public void setToken(String gcmToken) { this.gcmToken = gcmToken; }
+
+    public void setLocation(Location location) {
+        this.location = location;
     }
 
-    public String getToken() {
-        return this.token;
+    public void setLocation(double lat, double lon) {
+        if (location == null) {
+            location = new Location(lat, lon);
+        } else {
+            location.setLatitude(lat);
+            location.setLongitude(lon);
+        }
     }
-
 }
